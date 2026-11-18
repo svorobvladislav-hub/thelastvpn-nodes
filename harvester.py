@@ -1,5 +1,46 @@
+import asyncio
+import base64
+import json
+import os
+import random
+import re
+import socket
+import subprocess
+import urllib.request
+import zipfile
+from urllib.parse import parse_qs, unquote, urlparse, urlunparse
+
+import aiohttp
+from bs4 import BeautifulSoup
+
+# === ПАРАМЕТРЫ ===
+ENTRY_SPEED_MBPS = 30.0   # Порог входа для нового сервера
+KEEP_SPEED_MBPS = 20.0    # Порог удержания старого "ветерана"
+MAX_CANDIDATES = 320      # Лимит нод на Xray-проверку после TCP-отсева
+STATE_FILE = "active_slots_state.json"
+SOURCES_FILE = "sources.txt"
+OUTPUT_SUB_FILE = "sub.txt"
+XRAY_BIN = "./xray"
+
+# 14 фиксированных слотов (+ 1 личный CH в Cloudflare Worker = 15 серверов)
+SLOTS_CONFIG = [
+    ("DE", "🇩🇪 Германия • Frankfurt"),
+    ("NL", "🇳🇱 Нидерланды • Amsterdam"),
+    ("FI", "🇫🇮 Финляндия • Helsinki"),
+    ("US", "🇺🇸 США • Virginia"),
+    ("GB", "🇬🇧 Великобритания • London"),
+    ("FR", "🇫🇷 Франция • Paris"),
+    ("SE", "🇸🇪 Швеция • Stockholm"),
+    ("PL", "🇵🇱 Польша • Warsaw"),
+    ("JP", "🇯🇵 Япония • Tokyo"),
+    ("SG", "🇸🇬 Сингапур • Asia Hub"),
+    ("CA", "🇨🇦 Канада • Toronto"),
+    ("AT", "🇦🇹 Австрия • Vienna"),
+    ("EE", "🇪🇪 Эстония • Tallinn"),
+    ("TR", "🇹🇷 Турция • Istanbul"),
+]
+
 TARGET_WEBSITES = [
-    # Сайты-агрегаторы и блоги с ежедневными раздачами
     "https://v2rayse.com/en/free-v2ray",
     "https://v2ray-nodes.com/",
     "https://openproxylist.com/v2ray/",
@@ -10,7 +51,6 @@ TARGET_WEBSITES = [
     "https://v2rayshare.com/",
     "https://oneclash.cc/",
     "https://mibei77.com/",
-    # Публичные Telegram-каналы (веб-зеркало t.me/s/)
     "https://t.me/s/vless_vmess",
     "https://t.me/s/V2rayNG_Fast",
     "https://t.me/s/ConfigsHUB",
@@ -30,16 +70,216 @@ TARGET_WEBSITES = [
     "https://t.me/s/v2ray_configs_pool",
     "https://t.me/s/DirectVPN",
     "https://t.me/s/FreeV2rays",
-    "https://t.me/s/v2ray_alpha",
     "https://t.me/s/DailyV2RY",
-    "https://t.me/s/V2RayRootFree",
-    "https://t.me/s/proxy_kafee",
-    "https://t.me/s/v2ray_sub",
 ]
 
 
+def ensure_xray():
+    if os.path.exists(XRAY_BIN):
+        return
+    print("[Xray] Скачиваем Xray-core...")
+    url = "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
+    urllib.request.urlretrieve(url, "xray.zip")
+    with zipfile.ZipFile("xray.zip", "r") as zf:
+        zf.extract("xray", ".")
+    os.chmod(XRAY_BIN, 0o755)
+    os.remove("xray.zip")
+    print("[Xray] Ядро готово.")
+
+
+def decode_b64(data: str) -> str:
+    data = data.strip()
+    padding = 4 - (len(data) % 4)
+    if padding < 4:
+        data += "=" * padding
+    return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+
+
+def uri_to_xray_outbound(uri: str):
+    try:
+        if uri.startswith("vless://"):
+            p = urlparse(uri)
+            qs = parse_qs(p.query)
+            security = qs.get("security", ["none"])[0]
+            net = qs.get("type", ["tcp"])[0]
+            stream = {"network": net, "security": security}
+
+            if security == "reality":
+                stream["realitySettings"] = {
+                    "serverName": qs.get("sni", [""])[0],
+                    "fingerprint": qs.get("fp", ["chrome"])[0],
+                    "publicKey": qs.get("pbk", [""])[0],
+                    "shortId": qs.get("sid", [""])[0],
+                    "spiderX": unquote(qs.get("spx", ["/"])[0]),
+                }
+            elif security == "tls":
+                stream["tlsSettings"] = {
+                    "serverName": qs.get("sni", [p.hostname])[0],
+                    "allowInsecure": True,
+                }
+
+            if net == "ws":
+                stream["wsSettings"] = {
+                    "path": unquote(qs.get("path", ["/"])[0]),
+                    "headers": {"Host": qs.get("host", [p.hostname])[0]},
+                }
+            elif net == "grpc":
+                stream["grpcSettings"] = {"serviceName": qs.get("serviceName", [""])[0]}
+
+            return {
+                "protocol": "vless",
+                "settings": {
+                    "vnext": [{
+                        "address": p.hostname,
+                        "port": p.port or 443,
+                        "users": [{
+                            "id": p.username,
+                            "encryption": qs.get("encryption", ["none"])[0],
+                            "flow": qs.get("flow", [""])[0],
+                        }],
+                    }]
+                },
+                "streamSettings": stream,
+            }, p.hostname, p.port or 443
+
+        elif uri.startswith("trojan://"):
+            p = urlparse(uri)
+            qs = parse_qs(p.query)
+            net = qs.get("type", ["tcp"])[0]
+            security = qs.get("security", ["tls"])[0]
+            stream = {
+                "network": net,
+                "security": security,
+                "tlsSettings": {
+                    "serverName": qs.get("sni", [p.hostname])[0],
+                    "allowInsecure": True,
+                },
+            }
+            if net == "ws":
+                stream["wsSettings"] = {
+                    "path": unquote(qs.get("path", ["/"])[0]),
+                    "headers": {"Host": qs.get("host", [p.hostname])[0]},
+                }
+            return {
+                "protocol": "trojan",
+                "settings": {
+                    "servers": [{"address": p.hostname, "port": p.port or 443, "password": unquote(p.username or "")}]
+                },
+                "streamSettings": stream,
+            }, p.hostname, p.port or 443
+
+        elif uri.startswith("vmess://"):
+            raw = decode_b64(uri[8:])
+            cfg = json.loads(raw)
+            net = cfg.get("net", "tcp")
+            tls = cfg.get("tls", "")
+            stream = {"network": net, "security": "tls" if tls == "tls" else "none"}
+            if tls == "tls":
+                stream["tlsSettings"] = {"serverName": cfg.get("sni") or cfg.get("host") or cfg.get("add"), "allowInsecure": True}
+            if net == "ws":
+                stream["wsSettings"] = {"path": cfg.get("path", "/"), "headers": {"Host": cfg.get("host", cfg.get("add"))}}
+            return {
+                "protocol": "vmess",
+                "settings": {
+                    "vnext": [{
+                        "address": cfg["add"],
+                        "port": int(cfg["port"]),
+                        "users": [{"id": cfg["id"], "alterId": int(cfg.get("aid", 0)), "security": "auto"}],
+                    }]
+                },
+                "streamSettings": stream,
+            }, cfg["add"], int(cfg["port"])
+    except Exception:
+        return None
+    return None
+
+
+def get_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+async def test_with_xray(uri: str, min_speed: float):
+    parsed = uri_to_xray_outbound(uri)
+    if not parsed:
+        return None
+    outbound, _, _ = parsed
+    socks_port = get_free_port()
+
+    config = {
+        "log": {"loglevel": "none"},
+        "inbounds": [{"port": socks_port, "listen": "127.0.0.1", "protocol": "socks", "settings": {"udp": False}}],
+        "outbounds": [outbound],
+    }
+    cfg_path = f"/tmp/xray_{socks_port}.json"
+    with open(cfg_path, "w") as f:
+        json.dump(config, f)
+
+    proc = subprocess.Popen([XRAY_BIN, "run", "-c", cfg_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proxy_str = f"socks5h://127.0.0.1:{socks_port}"
+
+    try:
+        await asyncio.sleep(0.35)
+        geo_cmd = ["curl", "-s", "-m", "5", "-x", proxy_str, "http://ip-api.com/json/?fields=status,countryCode"]
+        geo_out = await asyncio.to_thread(subprocess.check_output, geo_cmd, stderr=subprocess.DEVNULL)
+        geo_json = json.loads(geo_out.decode("utf-8"))
+        if geo_json.get("status") != "success":
+            return None
+        country = geo_json.get("countryCode", "").upper()
+        if not country:
+            return None
+
+        speed_cmd = [
+            "curl", "-s", "-o", "/dev/null", "-w", "%{speed_download}",
+            "-m", "6", "-x", proxy_str, "https://speed.cloudflare.com/__down?bytes=10000000"
+        ]
+        speed_out = await asyncio.to_thread(subprocess.check_output, speed_cmd, stderr=subprocess.DEVNULL)
+        bytes_per_sec = float(speed_out.decode("utf-8").strip() or 0)
+        mbps = (bytes_per_sec * 8) / 1_000_000
+
+        if mbps >= min_speed:
+            return {"url": uri, "geo": country, "speed": round(mbps, 1)}
+        return None
+    except Exception:
+        return None
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=1)
+        except Exception:
+            proc.kill()
+        if os.path.exists(cfg_path):
+            os.remove(cfg_path)
+
+
+async def tcp_ping(uri: str, sem: asyncio.Semaphore):
+    parsed = uri_to_xray_outbound(uri)
+    if not parsed:
+        return None
+    _, host, port = parsed
+    async with sem:
+        try:
+            _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=1.5)
+            writer.close()
+            await writer.wait_closed()
+            return uri
+        except Exception:
+            return None
+
+
+async def fetch_source(session: aiohttp.ClientSession, url: str, sem: asyncio.Semaphore) -> str:
+    async with sem:
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                if resp.status == 200:
+                    return await resp.text()
+        except Exception:
+            pass
+        return ""
+
+
 async def discover_fresh_github_sources(session: aiohttp.ClientSession) -> list[str]:
-    """Максимальный поиск по GitHub: находит свежие репы и вскрывает их файловое дерево (Git Trees)"""
     token = os.getenv("GITHUB_TOKEN", "")
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "TheLastVPN-MaxHarvester"}
     if token:
@@ -88,32 +328,26 @@ async def discover_fresh_github_sources(session: aiohttp.ClientSession) -> list[
                             continue
                         path = item.get("path", "")
                         low = path.lower()
-                        # Берём файлы, похожие на подписки, и отсекаем мусор вроде .py/.md/.yml/.png
                         if any(low.endswith(bad) for bad in [".py", ".sh", ".yml", ".yaml", ".json", ".md", ".png", ".jpg", ".js", ".go"]):
                             continue
                         if any(k in low for k in ["vless", "reality", "sub", "mix", "config", "all", "node", "free", "merged"]):
-                            raw_link = f"https://raw.githubusercontent.com/{full_name}/{branch}/{path}"
-                            discovered.add(raw_link)
+                            discovered.add(f"https://raw.githubusercontent.com/{full_name}/{branch}/{path}")
             except Exception:
                 pass
 
-    # Сканируем до 80 самых свежих репозиториев
     await asyncio.gather(*(scan_repo_tree(fn, br) for fn, br in list(repos_to_scan.items())[:80]))
-    print(f"[Глубокая разведка GitHub] Вскрыто реп: {len(repos_to_scan)} | Найдено файлов-подписок: {len(discovered)}")
+    print(f"[Разведка GitHub] Вскрыто реп: {len(repos_to_scan)} | Найдено подписок: {len(discovered)}")
     return list(discovered)
 
 
 async def scrape_sites_and_telegram(session: aiohttp.ClientSession, sem: asyncio.Semaphore) -> set[str]:
-    """Парсит сайты-агрегаторы, свежие посты блогов и 25+ Telegram-каналов"""
     found_uris = set()
     extra_sub_urls = set()
-
     pages = await asyncio.gather(*(fetch_source(session, site, sem) for site in TARGET_WEBSITES))
 
     for site, html in zip(TARGET_WEBSITES, pages):
         if not html:
             continue
-
         clean_html = html.replace("&amp;", "&")
         for uri in re.findall(r'(?:vless|vmess|trojan)://[^\s<>"\'`]+', clean_html):
             found_uris.add(uri.strip())
@@ -128,7 +362,6 @@ async def scrape_sites_and_telegram(session: aiohttp.ClientSession, sem: asyncio
                 href = base_domain + href
             if not href.startswith("http"):
                 continue
-
             if any(ext in href.lower() for ext in [".txt", "/sub", "b64sub", "export", "v2ray"]):
                 if "t.me/" not in href:
                     extra_sub_urls.add(href)
@@ -138,7 +371,6 @@ async def scrape_sites_and_telegram(session: aiohttp.ClientSession, sem: asyncio
                 if href not in post_links and href != site:
                     post_links.append(href)
 
-        # Заходим в первые 5 свежих постов каждого сайта-блога
         for post_url in post_links[:5]:
             post_html = await fetch_source(session, post_url, sem)
             if post_html:
@@ -164,7 +396,7 @@ async def scrape_sites_and_telegram(session: aiohttp.ClientSession, sem: asyncio
                 if line.startswith(("vless://", "vmess://", "trojan://")):
                     found_uris.add(line)
 
-    print(f"[Краулер сайтов + TG] Вытащено прямых нод: {len(found_uris)} | Подписок с сайтов: {len(extra_sub_urls)}")
+    print(f"[Сайты + TG] Прямых нод: {len(found_uris)} | Подписок с сайтов: {len(extra_sub_urls)}")
     return found_uris
 
 
@@ -184,7 +416,6 @@ async def harvest_raw_nodes() -> list[str]:
         web_and_tg_uris = await scrape_sites_and_telegram(session, sem)
         raw_uris.update(web_and_tg_uris)
 
-        # Ограничиваем общий прогон до 600 источников за запуск, чтобы не упереться в таймаут
         all_candidate_urls = list(dict.fromkeys(saved_urls + fresh_urls))[:600]
 
         async def check_and_fetch(u: str):
@@ -195,11 +426,10 @@ async def harvest_raw_nodes() -> list[str]:
 
         pages = await asyncio.gather(*(check_and_fetch(u) for u in all_candidate_urls))
 
-    # Храним до 500 только 100% рабочих источников в sources.txt
     if alive_urls:
         with open(SOURCES_FILE, "w", encoding="utf-8") as f:
             f.write("\n".join(alive_urls[:500]) + "\n")
-        print(f"[Самоочистка] В sources.txt обновлено живых источников: {len(alive_urls[:500])}")
+        print(f"[Самоочистка] В sources.txt сохранено живых источников: {len(alive_urls[:500])}")
 
     for content in pages:
         if not content:
@@ -220,5 +450,126 @@ async def harvest_raw_nodes() -> list[str]:
     random.shuffle(reality)
     random.shuffle(others)
     combined = reality + others
-    print(f"[Пылесос MAX] Собрано уникальных нод: {len(combined)} (из них VLESS+Reality: {len(reality)})")
+    print(f"[Пылесос MAX] Уникальных нод: {len(combined)} (Reality: {len(reality)})")
     return combined[:6000]
+
+
+def set_static_title(uri: str, title: str) -> str:
+    if uri.startswith("vmess://"):
+        try:
+            cfg = json.loads(decode_b64(uri[8:]))
+            cfg["ps"] = title
+            encoded = base64.b64encode(json.dumps(cfg, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+            return "vmess://" + encoded
+        except Exception:
+            return uri
+    p = urlparse(uri)
+    return urlunparse((p.scheme, p.netloc, p.path, p.params, p.query, title))
+
+
+async def main():
+    ensure_xray()
+
+    previous_slots = {}
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            previous_slots = json.load(f)
+
+    final_slots = {}
+    used_urls = set()
+
+    print("=== ЭТАП 1: Проверка ветеранов ===")
+    for code, title in SLOTS_CONFIG:
+        old = previous_slots.get(code)
+        if not old:
+            continue
+        res = await test_with_xray(old["url"], KEEP_SPEED_MBPS)
+        if res:
+            old["speed"] = res["speed"]
+            final_slots[code] = old
+            used_urls.add(old["url"])
+            print(f"[{code}] 🔒 Ветеран жив ({res['speed']} Mbps, real={res['geo']}) — НЕ ТРОГАЕМ!")
+        else:
+            print(f"[{code}] 💀 Ветеран сдох или просел — ищем замену.")
+
+    missing_codes = [c for c, _ in SLOTS_CONFIG if c not in final_slots]
+    donor_codes = [c for c, d in final_slots.items() if d.get("is_donor")]
+
+    if not missing_codes and not donor_codes:
+        print("🎉 Все 14 слотов живы и на родных странах! Пропускаем тяжёлый поиск.")
+    else:
+        print(f"=== ЭТАП 2: Охота за слотами (пустых: {len(missing_codes)}, доноров: {len(donor_codes)}) ===")
+        candidates = await harvest_raw_nodes()
+        tcp_sem = asyncio.Semaphore(100)
+        alive_tcp = await asyncio.gather(*(tcp_ping(u, tcp_sem) for u in candidates))
+        alive_tcp = [u for u in alive_tcp if u and u not in used_urls][:MAX_CANDIDATES]
+        print(f"[TCP-фильтр] Отобрано {len(alive_tcp)} живых по порту нод...")
+
+        verified_pool = []
+        xray_sem = asyncio.Semaphore(6)
+
+        async def worker(u):
+            async with xray_sem:
+                needed = len(missing_codes) + len(donor_codes)
+                found_native = sum(1 for c in (missing_codes + donor_codes) if any(v["geo"] == c for v in verified_pool))
+                if found_native >= needed and len(verified_pool) >= needed + 5:
+                    return
+                res = await test_with_xray(u, ENTRY_SPEED_MBPS)
+                if res:
+                    verified_pool.append(res)
+                    print(f"  [+] Найдена нода: [{res['geo']}] {res['speed']} Mbps")
+
+        await asyncio.gather(*(worker(u) for u in alive_tcp))
+        verified_pool.sort(key=lambda x: x["speed"], reverse=True)
+
+        for code in donor_codes:
+            native = [v for v in verified_pool if v["geo"] == code and v["url"] not in used_urls]
+            if native:
+                used_urls.discard(final_slots[code]["url"])
+                chosen = native[0]
+                chosen["is_donor"] = False
+                final_slots[code] = chosen
+                used_urls.add(chosen["url"])
+                print(f"[{code}] ✨ Донор заменён на родную страну ({chosen['speed']} Mbps)!")
+
+        for code in list(missing_codes):
+            native = [v for v in verified_pool if v["geo"] == code and v["url"] not in used_urls]
+            if native:
+                chosen = native[0]
+                chosen["is_donor"] = False
+                final_slots[code] = chosen
+                used_urls.add(chosen["url"])
+                missing_codes.remove(code)
+                print(f"[{code}] ✅ Закрыт родной нодой ({chosen['speed']} Mbps)")
+
+        for code in list(missing_codes):
+            donors = [v for v in verified_pool if v["url"] not in used_urls]
+            if donors:
+                chosen = donors[0]
+                chosen["is_donor"] = True
+                final_slots[code] = chosen
+                used_urls.add(chosen["url"])
+                missing_codes.remove(code)
+                print(f"[{code}] 🔄 Поставлен донор из [{chosen['geo']}] ({chosen['speed']} Mbps)")
+            elif code in previous_slots:
+                final_slots[code] = previous_slots[code]
+                print(f"[{code}] ⚠️ Аварийно оставили старую запись.")
+
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(final_slots, f, indent=2, ensure_ascii=False)
+
+    sub_lines = []
+    for code, title in SLOTS_CONFIG:
+        if code in final_slots:
+            sub_lines.append(set_static_title(final_slots[code]["url"], title))
+
+    if sub_lines:
+        payload = "\n".join(sub_lines)
+        encoded = base64.b64encode(payload.encode("utf-8")).decode("utf-8")
+        with open(OUTPUT_SUB_FILE, "w", encoding="utf-8") as f:
+            f.write(encoded)
+        print(f"🚀 Готово! В sub.txt записано серверов: {len(sub_lines)} (+1 твой H1cloud = {len(sub_lines)+1})")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
