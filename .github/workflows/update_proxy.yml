@@ -1,0 +1,43 @@
+name: Auto Harvest 15-Slot Proxy
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: proxy-harvester-lock
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install aiohttp beautifulsoup4
+
+      - name: Run Xray Harvester
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python harvester.py
+
+      - name: Push updated sub.txt
+        run: |
+          git config --global user.name "TheLastVPN Bot"
+          git config --global user.email "bot@thelastvpn.local"
+          git add sub.txt active_slots_state.json sources.txt
+          git diff --staged --quiet || git commit -m "chore: update proxy slots & live sources [skip ci]"
+          git push
