@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 # === ПАРАМЕТРЫ ===
 ENTRY_SPEED_MBPS = 30.0   # Порог входа для нового сервера
 KEEP_SPEED_MBPS = 20.0    # Порог удержания старого "ветерана"
-MAX_CANDIDATES = 320      # Лимит нод на Xray-проверку после TCP-отсева
+MAX_CANDIDATES = 450      # Увеличенный лимит на Xray-проверку с учётом фильтра хостингов
 STATE_FILE = "active_slots_state.json"
 SOURCES_FILE = "sources.txt"
 OUTPUT_SUB_FILE = "sub.txt"
@@ -39,6 +39,23 @@ SLOTS_CONFIG = [
     ("EE", "🇪🇪 Эстония • Tallinn"),
     ("TR", "🇹🇷 Турция • Istanbul"),
 ]
+
+# Хостинги, подсети которых массово задушены ТСПУ и мобильными операторами в РФ
+BANNED_ISPS = (
+    "hetzner", "digitalocean", "ovh", "contabo", "vultr", "linode",
+    "akamai", "amazon", "aws", "google", "microsoft", "oracle", "alibaba", "tencent"
+)
+
+# Страны, которые нельзя брать даже как доноров
+BANNED_COUNTRIES = {"RU", "BY", "CN", "IR", "KP"}
+
+# Чистые мировые SNI для Reality, которые не режутся в РФ
+GOOD_SNIS = (
+    "microsoft.com", "apple.com", "samsung.com", "github.com", "nvidia.com",
+    "amd.com", "intel.com", "steamcommunity.com", "epicgames.com", "ea.com",
+    "bing.com", "yahoo.com", "asus.com", "logitech.com", "adobe.com", "mozilla.org",
+    "icloud.com", "office.com", "live.com", "playstation.com", "xbox.com"
+)
 
 TARGET_WEBSITES = [
     "https://v2rayse.com/en/free-v2ray",
@@ -95,6 +112,26 @@ def decode_b64(data: str) -> str:
     return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
 
 
+def is_clean_for_russia(uri: str) -> bool:
+    """Оставляет только VLESS + Reality (TCP/gRPC) с чистыми SNI и валидным publicKey"""
+    if not uri.startswith("vless://"):
+        return False
+    try:
+        p = urlparse(uri)
+        if not p.hostname or not p.username:
+            return False
+        qs = parse_qs(p.query)
+        sec = qs.get("security", ["none"])[0]
+        net = qs.get("type", ["tcp"])[0]
+        pbk = qs.get("pbk", [""])[0]
+        if sec != "reality" or net not in ("tcp", "grpc") or len(pbk) < 20:
+            return False
+        sni = qs.get("sni", [""])[0].lower()
+        return any(good in sni for good in GOOD_SNIS)
+    except Exception:
+        return False
+
+
 def uri_to_xray_outbound(uri: str):
     try:
         if uri.startswith("vless://"):
@@ -141,54 +178,6 @@ def uri_to_xray_outbound(uri: str):
                 },
                 "streamSettings": stream,
             }, p.hostname, p.port or 443
-
-        elif uri.startswith("trojan://"):
-            p = urlparse(uri)
-            qs = parse_qs(p.query)
-            net = qs.get("type", ["tcp"])[0]
-            security = qs.get("security", ["tls"])[0]
-            stream = {
-                "network": net,
-                "security": security,
-                "tlsSettings": {
-                    "serverName": qs.get("sni", [p.hostname])[0],
-                    "allowInsecure": True,
-                },
-            }
-            if net == "ws":
-                stream["wsSettings"] = {
-                    "path": unquote(qs.get("path", ["/"])[0]),
-                    "headers": {"Host": qs.get("host", [p.hostname])[0]},
-                }
-            return {
-                "protocol": "trojan",
-                "settings": {
-                    "servers": [{"address": p.hostname, "port": p.port or 443, "password": unquote(p.username or "")}]
-                },
-                "streamSettings": stream,
-            }, p.hostname, p.port or 443
-
-        elif uri.startswith("vmess://"):
-            raw = decode_b64(uri[8:])
-            cfg = json.loads(raw)
-            net = cfg.get("net", "tcp")
-            tls = cfg.get("tls", "")
-            stream = {"network": net, "security": "tls" if tls == "tls" else "none"}
-            if tls == "tls":
-                stream["tlsSettings"] = {"serverName": cfg.get("sni") or cfg.get("host") or cfg.get("add"), "allowInsecure": True}
-            if net == "ws":
-                stream["wsSettings"] = {"path": cfg.get("path", "/"), "headers": {"Host": cfg.get("host", cfg.get("add"))}}
-            return {
-                "protocol": "vmess",
-                "settings": {
-                    "vnext": [{
-                        "address": cfg["add"],
-                        "port": int(cfg["port"]),
-                        "users": [{"id": cfg["id"], "alterId": int(cfg.get("aid", 0)), "security": "auto"}],
-                    }]
-                },
-                "streamSettings": stream,
-            }, cfg["add"], int(cfg["port"])
     except Exception:
         return None
     return None
@@ -201,6 +190,8 @@ def get_free_port() -> int:
 
 
 async def test_with_xray(uri: str, min_speed: float):
+    if not is_clean_for_russia(uri):
+        return None
     parsed = uri_to_xray_outbound(uri)
     if not parsed:
         return None
@@ -221,13 +212,18 @@ async def test_with_xray(uri: str, min_speed: float):
 
     try:
         await asyncio.sleep(0.35)
-        geo_cmd = ["curl", "-s", "-m", "5", "-x", proxy_str, "http://ip-api.com/json/?fields=status,countryCode"]
+        geo_cmd = ["curl", "-s", "-m", "5", "-x", proxy_str, "http://ip-api.com/json/?fields=status,countryCode,isp,org"]
         geo_out = await asyncio.to_thread(subprocess.check_output, geo_cmd, stderr=subprocess.DEVNULL)
         geo_json = json.loads(geo_out.decode("utf-8"))
         if geo_json.get("status") != "success":
             return None
+
         country = geo_json.get("countryCode", "").upper()
-        if not country:
+        if not country or country in BANNED_COUNTRIES:
+            return None
+
+        provider = f"{geo_json.get('isp', '')} {geo_json.get('org', '')}".lower()
+        if any(bad in provider for bad in BANNED_ISPS):
             return None
 
         speed_cmd = [
@@ -239,7 +235,7 @@ async def test_with_xray(uri: str, min_speed: float):
         mbps = (bytes_per_sec * 8) / 1_000_000
 
         if mbps >= min_speed:
-            return {"url": uri, "geo": country, "speed": round(mbps, 1)}
+            return {"url": uri, "geo": country, "speed": round(mbps, 1), "isp": geo_json.get("isp", "Unknown")}
         return None
     except Exception:
         return None
@@ -349,7 +345,7 @@ async def scrape_sites_and_telegram(session: aiohttp.ClientSession, sem: asyncio
         if not html:
             continue
         clean_html = html.replace("&amp;", "&")
-        for uri in re.findall(r'(?:vless|vmess|trojan)://[^\s<>"\'`]+', clean_html):
+        for uri in re.findall(r'vless://[^\s<>"\'`]+', clean_html):
             found_uris.add(uri.strip())
 
         soup = BeautifulSoup(clean_html, "html.parser")
@@ -375,7 +371,7 @@ async def scrape_sites_and_telegram(session: aiohttp.ClientSession, sem: asyncio
             post_html = await fetch_source(session, post_url, sem)
             if post_html:
                 post_clean = post_html.replace("&amp;", "&")
-                for uri in re.findall(r'(?:vless|vmess|trojan)://[^\s<>"\'`]+', post_clean):
+                for uri in re.findall(r'vless://[^\s<>"\'`]+', post_clean):
                     found_uris.add(uri.strip())
                 for sub_link in re.findall(r'https?://[^\s<>"\'`]+\.txt', post_clean):
                     extra_sub_urls.add(sub_link.strip())
@@ -393,10 +389,10 @@ async def scrape_sites_and_telegram(session: aiohttp.ClientSession, sem: asyncio
                     pass
             for line in text.splitlines():
                 line = line.strip()
-                if line.startswith(("vless://", "vmess://", "trojan://")):
+                if line.startswith("vless://"):
                     found_uris.add(line)
 
-    print(f"[Сайты + TG] Прямых нод: {len(found_uris)} | Подписок с сайтов: {len(extra_sub_urls)}")
+    print(f"[Сайты + TG] Прямых VLESS: {len(found_uris)} | Подписок с сайтов: {len(extra_sub_urls)}")
     return found_uris
 
 
@@ -442,27 +438,16 @@ async def harvest_raw_nodes() -> list[str]:
                 pass
         for line in text.splitlines():
             line = line.strip()
-            if line.startswith(("vless://", "vmess://", "trojan://")):
+            if line.startswith("vless://"):
                 raw_uris.add(line)
 
-    reality = [u for u in raw_uris if u.startswith("vless://") and "security=reality" in u]
-    others = [u for u in raw_uris if u not in reality]
-    random.shuffle(reality)
-    random.shuffle(others)
-    combined = reality + others
-    print(f"[Пылесос MAX] Уникальных нод: {len(combined)} (Reality: {len(reality)})")
-    return combined[:6000]
+    clean_ru = [u for u in raw_uris if is_clean_for_russia(u)]
+    random.shuffle(clean_ru)
+    print(f"[Пылесос MAX] Всего VLESS: {len(raw_uris)} | Прошли фильтр РФ (Reality + чистый SNI): {len(clean_ru)}")
+    return clean_ru[:6000]
 
 
 def set_static_title(uri: str, title: str) -> str:
-    if uri.startswith("vmess://"):
-        try:
-            cfg = json.loads(decode_b64(uri[8:]))
-            cfg["ps"] = title
-            encoded = base64.b64encode(json.dumps(cfg, ensure_ascii=False).encode("utf-8")).decode("utf-8")
-            return "vmess://" + encoded
-        except Exception:
-            return uri
     p = urlparse(uri)
     return urlunparse((p.scheme, p.netloc, p.path, p.params, p.query, title))
 
@@ -488,9 +473,9 @@ async def main():
             old["speed"] = res["speed"]
             final_slots[code] = old
             used_urls.add(old["url"])
-            print(f"[{code}] 🔒 Ветеран жив ({res['speed']} Mbps, real={res['geo']}) — НЕ ТРОГАЕМ!")
+            print(f"[{code}] 🔒 Ветеран жив ({res['speed']} Mbps, {res['isp']}) — НЕ ТРОГАЕМ!")
         else:
-            print(f"[{code}] 💀 Ветеран сдох или просел — ищем замену.")
+            print(f"[{code}] 💀 Ветеран сдох или попал под бан — ищем замену.")
 
     missing_codes = [c for c, _ in SLOTS_CONFIG if c not in final_slots]
     donor_codes = [c for c, d in final_slots.items() if d.get("is_donor")]
@@ -517,7 +502,7 @@ async def main():
                 res = await test_with_xray(u, ENTRY_SPEED_MBPS)
                 if res:
                     verified_pool.append(res)
-                    print(f"  [+] Найдена нода: [{res['geo']}] {res['speed']} Mbps")
+                    print(f"  [+] Найдена чистая нода: [{res['geo']}] {res['speed']} Mbps ({res['isp']})")
 
         await asyncio.gather(*(worker(u) for u in alive_tcp))
         verified_pool.sort(key=lambda x: x["speed"], reverse=True)
@@ -551,7 +536,7 @@ async def main():
                 used_urls.add(chosen["url"])
                 missing_codes.remove(code)
                 print(f"[{code}] 🔄 Поставлен донор из [{chosen['geo']}] ({chosen['speed']} Mbps)")
-            elif code in previous_slots:
+            elif code in previous_slots and is_clean_for_russia(previous_slots[code]["url"]):
                 final_slots[code] = previous_slots[code]
                 print(f"[{code}] ⚠️ Аварийно оставили старую запись.")
 
