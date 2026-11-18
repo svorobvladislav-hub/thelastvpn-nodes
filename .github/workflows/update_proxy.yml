@@ -38,9 +38,8 @@ jobs:
         run: |
           git config --global user.name "TheLastVPN Bot"
           git config --global user.email "bot@thelastvpn.local"
+          git fetch origin main
+          git reset --soft origin/main
           git add sub.txt active_slots_state.json sources.txt
-          if ! git diff --staged --quiet; then
-            git commit -m "chore: update proxy slots & live sources [skip ci]"
-            git pull --rebase -X ours origin main
-            git push
-          fi
+          git diff --staged --quiet || git commit -m "chore: update proxy slots & live sources [skip ci]"
+          git push origin main
