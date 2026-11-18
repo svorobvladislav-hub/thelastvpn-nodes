@@ -1,86 +1,68 @@
 {
-  "DE": {
-    "url": "vless://0dcefe19-a42a-4d57-96be-83dcbffd425f@200.96.106.2:9889?security=reality&encryption=none&pbk=GPwEGfRBoztNbcAvfX4ojY9FJ1vaMD3v21tnIrN2xyE&host=%2F%3FTelegram---PLANB_NET---PLANB_NET---PLANB_NET---PLANB_NET&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=tiktok2.transitbp2systems.com#%40V2ray_Alpha%F0%9F%8C%A1%EF%B8%8F%203",
-    "geo": "DE",
-    "speed": 57.2,
-    "is_donor": false
-  },
-  "NL": {
-    "url": "vless://48ff2b70-e180-582f-8866-d9a2edeed5f5@51.158.206.80:23576?encryption=none&flow=xtls-rprx-vision&pbk=1y5h2FGWKXTJ9xLPCqPo6Mw7RxoZzh6fGkEQKNxpZ3s&security=reality&sid=01&sni=fuck.rkn&type=tcp#NL 🇳🇱 | @Raydikalx | 977409",
-    "geo": "NL",
-    "speed": 62.7,
-    "is_donor": false
-  },
-  "FI": {
-    "url": "vless://6c077993-952c-4318-9e93-89056a207a9b@141.227.170.220:8443?encryption=none&flow=xtls-rprx-vision&fp=&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&security=reality&sid=6ba85179e30d4fc2&sni=apple.com&type=tcp#FI 🇫🇮 | @Raydikalx | 184B76",
-    "geo": "FI",
-    "speed": 52.5,
-    "is_donor": false
-  },
-  "US": {
-    "url": "vless://d65cc14c-f53f-4fe2-b262-97856601319c@169.40.42.90:443?flow=xtls-rprx-vision&fp=chrome&host=yahoo.com&pbk=e2RLf57Li_-MDZGE9ss1BWPgP54mqRb5PfXhW2jcVVg&security=reality&sid=c39cc7310a&sni=yahoo.com&type=tcp#hamedp71%3A%3A%F0%9F%8F%B4%E2%80%8D%E2%98%A0%EF%B8%8F",
-    "geo": "US",
-    "speed": 229.6,
-    "is_donor": false
-  },
-  "GB": {
-    "url": "vless://fa937345-6d3e-4ff4-8127-1a836987a0db@195.63.128.21:14443?type=tcp&security=reality&flow=xtls-rprx-vision&fp=firefox&pbk=KGxtfPbpQkMnKiR1dysy3bm-S4fz0xuxqjMnxAeaACc&sid=1529bcdb0b29f4e5&sni=england.cloudhouse1.ru#%F0%9F%87%B3%F0%9F%87%B1%20%40happ_tmn",
-    "geo": "GB",
-    "speed": 57.3,
-    "is_donor": false
-  },
-  "PL": {
-    "url": "vless://7d43670b-6b08-45b9-8a24-8f3971abc132@222.167.245.16:443?security=reality&encryption=none&pbk=j4Uc6ljg9by_VKYywo5h2N-eh3kpUbFL5Bsp8-AX4Qk&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=poland.biznes.lol#[6793][PL][0][VLESS][None][ext_raw.githubusercontent.com][2026-11-16][2026-11-16 03:31]",
-    "geo": "PL",
-    "speed": 49.8,
-    "is_donor": false
-  },
   "FR": {
     "url": "vless://d65cc14c-f53f-4fe2-b262-97856601319c@45.144.112.55:443?security=reality&encryption=none&pbk=e2RLf57Li_-MDZGE9ss1BWPgP54mqRb5PfXhW2jcVVg&headerType=none&fp=firefox&type=tcp&flow=xtls-rprx-vision&sni=yahoo.com&sid=c39cc7310a#Channel%20id%3A%20%40ConfigV2RayNG%20%F0%9F%87%BA%F0%9F%87%B8",
     "geo": "US",
-    "speed": 219.5,
+    "speed": 66.1,
     "is_donor": true
   },
   "SE": {
     "url": "vless://d65cc14c-f53f-4fe2-b262-97856601319c@169.40.42.168:443?flow=xtls-rprx-vision&encryption=none&security=reality&sni=yahoo.com&fp=ios&pbk=e2RLf57Li_-MDZGE9ss1BWPgP54mqRb5PfXhW2jcVVg&sid=c39cc7310a&type=tcp&headerType=none#ok7_vless_69ms",
     "geo": "US",
-    "speed": 201.0,
+    "speed": 20.4,
     "is_donor": true
   },
   "JP": {
     "url": "vless://327b1113-049e-4256-8d72-8815643dbb65@148.135.86.162:10000?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&fp=chrome&sni=addons.mozilla.org&pbk=DCbnS4mIPc1W2-wI0MGHhykwzf2nVuZvBadErSE6MxU&sid=a1b2c3d4#🔥Join+Telegram:@Farah_VPN🟣",
     "geo": "US",
-    "speed": 137.1,
+    "speed": 145.1,
     "is_donor": true
   },
-  "SG": {
-    "url": "vless://48ff2b70-e180-582f-8866-d9a2edeed5f5@51.158.206.86:23576?encryption=none&flow=xtls-rprx-vision&security=reality&sni=fuck.rkn&pbk=1y5h2FGWKXTJ9xLPCqPo6Mw7RxoZzh6fGkEQKNxpZ3s&sid=01&type=tcp&headerType=none&host=/?Telegram---@pirozi_ArGaP---@pirozi_ArGaP---@pirozi_ArGaP---@pirozi_ArGaP#[4026][NL][0][VLESS][None][ext_raw.githubusercontent.com][2026-11-16][2026-11-16 03:31]",
-    "geo": "NL",
+  "US": {
+    "url": "vless://d65cc14c-f53f-4fe2-b262-97856601319c@169.40.42.90:443?flow=xtls-rprx-vision&fp=chrome&pbk=e2RLf57Li_-MDZGE9ss1BWPgP54mqRb5PfXhW2jcVVg&security=reality&sid=c39cc7310a&sni=yahoo.com&type=tcp#%5BUS%5D%20%7C%20RAY%20%7C%2061ms%20%7C%20reality",
+    "geo": "US",
+    "speed": 68.0,
+    "isp": "Clouvider Limited",
+    "is_donor": false
+  },
+  "DE": {
+    "url": "vless://d65cc14c-f53f-4fe2-b262-97856601319c@169.40.42.90:443?flow=xtls-rprx-vision&fp=chrome&host=yahoo.com&path=/&pbk=e2RLf57Li_-MDZGE9ss1BWPgP54mqRb5PfXhW2jcVVg&security=reality&sid=c39cc7310a&sni=yahoo.com&type=tcp#🇺🇸 | تلگرام: @IRJetConfig #REALITY%20%7C%20%40PulseConfigs%20%7C%206bdabc",
+    "geo": "US",
+    "speed": 66.8,
+    "isp": "Clouvider Limited",
+    "is_donor": true
+  },
+  "NL": {
+    "url": "vless://d65cc14c-f53f-4fe2-b262-97856601319c@169.40.42.89:443/?type=tcp&encryption=none&flow=xtls-rprx-vision&sni=yahoo.com&alpn=networld_vpn-channel@.networld_vpn-channel@.networld_vpn-channel@.networld_vpn-channel@.networld_vpn-channel@.networld_vpn-channel@.networld_vpn-&security=reality&pbk=e2RLf57Li_-MDZGE9ss1BWPgP54mqRb5PfXhW2jcVVg&sid=c39cc7310a#REALITY%20%7C%20%40PulseConfigs%20%7C%2033d642",
+    "geo": "US",
+    "speed": 63.7,
+    "isp": "Clouvider Limited",
+    "is_donor": true
+  },
+  "FI": {
+    "url": "vless://d65cc14c-f53f-4fe2-b262-97856601319c@45.144.112.55:443?security=reality&encryption=none&pbk=e2RLf57Li_-MDZGE9ss1BWPgP54mqRb5PfXhW2jcVVg&headerType=none&fp=firefox&type=tcp&flow=xtls-rprx-vision&sni=yahoo.com&sid=c39cc7310a#%5BUS%5D%20%7C%20RAY%20%7C%2062ms%20%7C%20reality",
+    "geo": "US",
     "speed": 62.5,
+    "isp": "Clouvider Limited",
+    "is_donor": true
+  },
+  "GB": {
+    "url": "vless://d65cc14c-f53f-4fe2-b262-97856601319c@169.40.42.163:443/?type=tcp&encryption=none&flow=xtls-rprx-vision&sni=yahoo.com&fp=chrome&security=reality&pbk=e2RLf57Li_-MDZGE9ss1BWPgP54mqRb5PfXhW2jcVVg&sid=c39cc7310a#REALITY%20%7C%20%40PulseConfigs%20%7C%20464a8c",
+    "geo": "US",
+    "speed": 59.1,
+    "isp": "Clouvider Limited",
+    "is_donor": true
+  },
+  "PL": {
+    "url": "vless://12a4f736-2238-49ee-831f-5516f15cc951@2.26.204.46:31001?security=reality&type=tcp&packetEncoding=xudp&sni=mensura.cdn-apple.com&fp=chrome&flow=xtls-rprx-vision&sid=39793bc4708abbbb&pbk=lzpIiMqHXas_qayw-HvrySb78FNkVroBOqniwqPXPzY&encryption=none#REALITY%20%7C%20%40PulseConfigs%20%7C%20e28570",
+    "geo": "HK",
+    "speed": 40.6,
+    "isp": "Yuusei LTD",
     "is_donor": true
   },
   "CA": {
     "url": "vless://27f26dee-9cf1-4cca-93f8-9ac23d311408@147.45.47.101:8443?security=reality&encryption=none&pbk=SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=apple.com&sid=6ba85179e30d4fc2#@V2rayNPVTConfig",
     "geo": "RU",
     "speed": 61.8,
-    "is_donor": true
-  },
-  "AT": {
-    "url": "vless://48ff2b70-e180-582f-8866-d9a2edeed5f5@51.158.206.97:23576?security=reality&encryption=none&pbk=1y5h2FGWKXTJ9xLPCqPo6Mw7RxoZzh6fGkEQKNxpZ3s&host=/?TELEGRAM---MARAMBASHI---MARAMBASHI---MARAMBASHI---MARAMBASHI&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=fuck.rkn&sid=01#YFZ 275 @Outline_Vpn",
-    "geo": "NL",
-    "speed": 61.6,
-    "is_donor": true
-  },
-  "EE": {
-    "url": "vless://48ff2b70-e180-582f-8866-d9a2edeed5f5@51.158.206.97:23576?security=reality&encryption=none&pbk=1y5h2FGWKXTJ9xLPCqPo6Mw7RxoZzh6fGkEQKNxpZ3s&host=%2F%3FTelegram---PLANB_NET---PLANB_NET---PLANB_NET---PLANB_NET&headerType=none&type=tcp&flow=xtls-rprx-vision&sni=fuck.rkn&sid=01#🔥Join+Telegram:@Farah_VPN🟣",
-    "geo": "NL",
-    "speed": 61.1,
-    "is_donor": true
-  },
-  "TR": {
-    "url": "vless://48ff2b70-e180-582f-8866-d9a2edeed5f5@51.158.206.86:23576?security=reality&encryption=none&pbk=1y5h2FGWKXTJ9xLPCqPo6Mw7RxoZzh6fGkEQKNxpZ3s&host=Copy_Shode_az_Chanel0111Net&headerType=none&type=tcp&flow=xtls-rprx-vision&sni=fuck.rkn&sid=01#[🇳🇱]t.me/ConfigsHub",
-    "geo": "NL",
-    "speed": 60.6,
     "is_donor": true
   }
 }
