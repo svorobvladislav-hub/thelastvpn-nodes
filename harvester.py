@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 # === ПАРАМЕТРЫ ===
 ENTRY_SPEED_MBPS = 30.0   # Порог входа для нового сервера
 KEEP_SPEED_MBPS = 20.0    # Порог удержания старого "ветерана"
-MAX_CANDIDATES = 450      # Увеличенный лимит на Xray-проверку с учётом фильтра хостингов
+MAX_CANDIDATES = 220      # Оптимальный срез, чтобы укладываться в ~1.5–2 минуты
 STATE_FILE = "active_slots_state.json"
 SOURCES_FILE = "sources.txt"
 OUTPUT_SUB_FILE = "sub.txt"
@@ -113,7 +113,6 @@ def decode_b64(data: str) -> str:
 
 
 def is_clean_for_russia(uri: str) -> bool:
-    """Оставляет только VLESS + Reality (TCP/gRPC) с чистыми SNI и валидным publicKey"""
     if not uri.startswith("vless://"):
         return False
     try:
@@ -149,18 +148,7 @@ def uri_to_xray_outbound(uri: str):
                     "shortId": qs.get("sid", [""])[0],
                     "spiderX": unquote(qs.get("spx", ["/"])[0]),
                 }
-            elif security == "tls":
-                stream["tlsSettings"] = {
-                    "serverName": qs.get("sni", [p.hostname])[0],
-                    "allowInsecure": True,
-                }
-
-            if net == "ws":
-                stream["wsSettings"] = {
-                    "path": unquote(qs.get("path", ["/"])[0]),
-                    "headers": {"Host": qs.get("host", [p.hostname])[0]},
-                }
-            elif net == "grpc":
+            if net == "grpc":
                 stream["grpcSettings"] = {"serviceName": qs.get("serviceName", [""])[0]}
 
             return {
@@ -211,8 +199,8 @@ async def test_with_xray(uri: str, min_speed: float):
     proxy_str = f"socks5h://127.0.0.1:{socks_port}"
 
     try:
-        await asyncio.sleep(0.35)
-        geo_cmd = ["curl", "-s", "-m", "5", "-x", proxy_str, "http://ip-api.com/json/?fields=status,countryCode,isp,org"]
+        await asyncio.sleep(0.3)
+        geo_cmd = ["curl", "-s", "-m", "4", "-x", proxy_str, "http://ip-api.com/json/?fields=status,countryCode,isp,org"]
         geo_out = await asyncio.to_thread(subprocess.check_output, geo_cmd, stderr=subprocess.DEVNULL)
         geo_json = json.loads(geo_out.decode("utf-8"))
         if geo_json.get("status") != "success":
@@ -228,7 +216,7 @@ async def test_with_xray(uri: str, min_speed: float):
 
         speed_cmd = [
             "curl", "-s", "-o", "/dev/null", "-w", "%{speed_download}",
-            "-m", "6", "-x", proxy_str, "https://speed.cloudflare.com/__down?bytes=10000000"
+            "-m", "5", "-x", proxy_str, "https://speed.cloudflare.com/__down?bytes=8000000"
         ]
         speed_out = await asyncio.to_thread(subprocess.check_output, speed_cmd, stderr=subprocess.DEVNULL)
         bytes_per_sec = float(speed_out.decode("utf-8").strip() or 0)
@@ -256,7 +244,7 @@ async def tcp_ping(uri: str, sem: asyncio.Semaphore):
     _, host, port = parsed
     async with sem:
         try:
-            _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=1.5)
+            _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=1.2)
             writer.close()
             await writer.wait_closed()
             return uri
@@ -267,7 +255,7 @@ async def tcp_ping(uri: str, sem: asyncio.Semaphore):
 async def fetch_source(session: aiohttp.ClientSession, url: str, sem: asyncio.Semaphore) -> str:
     async with sem:
         try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=7)) as resp:
                 if resp.status == 200:
                     return await resp.text()
         except Exception:
@@ -288,15 +276,13 @@ async def discover_fresh_github_sources(session: aiohttp.ClientSession) -> list[
         "xray subscription base64",
         "v2ray collector vless",
         "Splitted-By-Protocol vless",
-        "telegram-configs-collector",
-        "free-v2ray-configs",
     ]
     repos_to_scan = {}
 
     for q in queries:
-        api_url = f"https://api.github.com/search/repositories?q={urllib.request.quote(q)}&sort=updated&order=desc&per_page=25"
+        api_url = f"https://api.github.com/search/repositories?q={urllib.request.quote(q)}&sort=updated&order=desc&per_page=20"
         try:
-            async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 if resp.status != 200:
                     continue
                 data = await resp.json()
@@ -315,7 +301,7 @@ async def discover_fresh_github_sources(session: aiohttp.ClientSession) -> list[
         async with tree_sem:
             tree_url = f"https://api.github.com/repos/{full_name}/git/trees/{branch}?recursive=1"
             try:
-                async with session.get(tree_url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                async with session.get(tree_url, headers=headers, timeout=aiohttp.ClientTimeout(total=7)) as resp:
                     if resp.status != 200:
                         return
                     tree_data = await resp.json()
@@ -331,7 +317,7 @@ async def discover_fresh_github_sources(session: aiohttp.ClientSession) -> list[
             except Exception:
                 pass
 
-    await asyncio.gather(*(scan_repo_tree(fn, br) for fn, br in list(repos_to_scan.items())[:80]))
+    await asyncio.gather(*(scan_repo_tree(fn, br) for fn, br in list(repos_to_scan.items())[:60]))
     print(f"[Разведка GitHub] Вскрыто реп: {len(repos_to_scan)} | Найдено подписок: {len(discovered)}")
     return list(discovered)
 
@@ -367,7 +353,7 @@ async def scrape_sites_and_telegram(session: aiohttp.ClientSession, sem: asyncio
                 if href not in post_links and href != site:
                     post_links.append(href)
 
-        for post_url in post_links[:5]:
+        for post_url in post_links[:4]:
             post_html = await fetch_source(session, post_url, sem)
             if post_html:
                 post_clean = post_html.replace("&amp;", "&")
@@ -377,7 +363,7 @@ async def scrape_sites_and_telegram(session: aiohttp.ClientSession, sem: asyncio
                     extra_sub_urls.add(sub_link.strip())
 
     if extra_sub_urls:
-        sub_pages = await asyncio.gather(*(fetch_source(session, u, sem) for u in list(extra_sub_urls)[:80]))
+        sub_pages = await asyncio.gather(*(fetch_source(session, u, sem) for u in list(extra_sub_urls)[:60]))
         for content in sub_pages:
             if not content:
                 continue
@@ -402,7 +388,7 @@ async def harvest_raw_nodes() -> list[str]:
         with open(SOURCES_FILE, "r", encoding="utf-8") as f:
             saved_urls = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
 
-    sem = asyncio.Semaphore(40)
+    sem = asyncio.Semaphore(50)
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     raw_uris = set()
     alive_urls = []
@@ -412,7 +398,7 @@ async def harvest_raw_nodes() -> list[str]:
         web_and_tg_uris = await scrape_sites_and_telegram(session, sem)
         raw_uris.update(web_and_tg_uris)
 
-        all_candidate_urls = list(dict.fromkeys(saved_urls + fresh_urls))[:600]
+        all_candidate_urls = list(dict.fromkeys(saved_urls + fresh_urls))[:500]
 
         async def check_and_fetch(u: str):
             content = await fetch_source(session, u, sem)
@@ -444,7 +430,7 @@ async def harvest_raw_nodes() -> list[str]:
     clean_ru = [u for u in raw_uris if is_clean_for_russia(u)]
     random.shuffle(clean_ru)
     print(f"[Пылесос MAX] Всего VLESS: {len(raw_uris)} | Прошли фильтр РФ (Reality + чистый SNI): {len(clean_ru)}")
-    return clean_ru[:6000]
+    return clean_ru[:3000]
 
 
 def set_static_title(uri: str, title: str) -> str:
@@ -485,13 +471,13 @@ async def main():
     else:
         print(f"=== ЭТАП 2: Охота за слотами (пустых: {len(missing_codes)}, доноров: {len(donor_codes)}) ===")
         candidates = await harvest_raw_nodes()
-        tcp_sem = asyncio.Semaphore(100)
+        tcp_sem = asyncio.Semaphore(120)
         alive_tcp = await asyncio.gather(*(tcp_ping(u, tcp_sem) for u in candidates))
         alive_tcp = [u for u in alive_tcp if u and u not in used_urls][:MAX_CANDIDATES]
         print(f"[TCP-фильтр] Отобрано {len(alive_tcp)} живых по порту нод...")
 
         verified_pool = []
-        xray_sem = asyncio.Semaphore(6)
+        xray_sem = asyncio.Semaphore(16)
 
         async def worker(u):
             async with xray_sem:
